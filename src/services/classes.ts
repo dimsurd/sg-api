@@ -209,22 +209,42 @@ export async function assertTutorOwnsClass(tutorId: string, classId: string) {
 // Student
 // ---------------------------------------------------------------------------
 
-/** Catalogue: active classes, with the student's own enrollment status if any. */
-export async function studentCatalogue(studentId: string) {
-  return many(
+export const catalogueQuerySchema = z.object({
+  q: z.string().trim().max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+/**
+ * Catalogue: active classes, with the student's own enrollment status if any.
+ * Paged (limit/offset) and searchable on the server so the app can lazy-load:
+ * every word of `q` must appear in the name, description or tutor name.
+ */
+export async function studentCatalogue(studentId: string, query: z.infer<typeof catalogueQuerySchema>) {
+  const words = (query.q ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  const rows = await many<Record<string, unknown> & { total: number }>(
     pool,
     `SELECT c.id, c.name, c.description, c.capacity, c.student_rate_per_hour, c.default_package_hours,
             t.full_name AS tutor_name,
             (SELECT count(*)::int FROM enrollments e
               WHERE e.class_id = c.id AND e.status IN ('pending_payment', 'active')) AS seats_taken,
-            my.id AS my_enrollment_id, my.status AS my_enrollment_status
+            my.id AS my_enrollment_id, my.status AS my_enrollment_status,
+            count(*) OVER ()::int AS total
        FROM classes c
        JOIN users t ON t.id = c.tutor_id
        LEFT JOIN enrollments my ON my.class_id = c.id AND my.student_id = $1 AND my.status <> 'cancelled'
       WHERE c.status = 'active'
-      ORDER BY c.name`,
-    [studentId],
+        AND NOT EXISTS (
+          SELECT 1 FROM unnest($2::text[]) AS w
+           WHERE strpos(lower(c.name || ' ' || c.description || ' ' || t.full_name), w) = 0
+        )
+      ORDER BY c.name, c.id
+      LIMIT $3 OFFSET $4`,
+    [studentId, words, query.limit, query.offset],
   );
+  const total = rows[0]?.total ?? 0;
+  const nextOffset = query.offset + rows.length < total ? query.offset + rows.length : null;
+  return { classes: rows.map(({ total: _t, ...c }) => c), total, nextOffset };
 }
 
 /** Rule: students only see classes they have paid for (enrollment active). */
@@ -233,7 +253,7 @@ export async function studentMyClasses(studentId: string) {
     pool,
     `SELECT c.id, c.name, c.description, t.full_name AS tutor_name, c.default_package_hours,
             b.enrollment_id, b.paid_minutes, b.used_minutes, b.reserved_minutes,
-            b.remaining_minutes, b.available_minutes,
+            b.remaining_minutes, b.available_minutes, b.awaiting_minutes,
             (SELECT min(l.starts_at) FROM lessons l
               WHERE l.class_id = c.id AND l.status = 'scheduled' AND l.starts_at > now()) AS next_lesson_at,
             EXISTS (SELECT 1 FROM invoices i WHERE i.enrollment_id = b.enrollment_id AND i.status = 'unpaid')

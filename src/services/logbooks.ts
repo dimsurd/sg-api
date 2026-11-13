@@ -64,7 +64,7 @@ async function monthLessons(db: PoolClient | typeof pool, classId: string, month
        JOIN users t ON t.id = l.tutor_id
        LEFT JOIN logbook_entries le ON le.lesson_id = l.id
       WHERE l.class_id = $1 AND wib_month(l.starts_at) = $2::date
-      ORDER BY l.starts_at`,
+      ORDER BY l.starts_at DESC`, // newest first
     [classId, month],
   );
 }
@@ -349,7 +349,7 @@ export async function studentLogbooks(classId: string) {
               'lessonId', l.id, 'startsAt', l.starts_at, 'endsAt', l.ends_at,
               'topic', le.topic, 'activities', le.activities,
               'tutorObservation', le.tutor_observation, 'futureRecommendation', le.future_recommendation
-            ) ORDER BY l.starts_at) FILTER (WHERE le.id IS NOT NULL), '[]') AS entries
+            ) ORDER BY l.starts_at DESC) FILTER (WHERE le.id IS NOT NULL), '[]') AS entries
        FROM logbooks lb
        LEFT JOIN logbook_entries le ON le.logbook_id = lb.id
        LEFT JOIN lessons l ON l.id = le.lesson_id

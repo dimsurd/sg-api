@@ -12,7 +12,7 @@ studentRouter.use(requireRole('student'));
 
 // Catalogue & enrollment -----------------------------------------------------
 studentRouter.get('/classes/available', async (req, res) => {
-  res.json({ classes: await classes.studentCatalogue(currentUser(req).id) });
+  res.json(await classes.studentCatalogue(currentUser(req).id, classes.catalogueQuerySchema.parse(req.query)));
 });
 studentRouter.post('/enrollments', async (req, res) => {
   const { classId, hours } = z.object({ classId: uuid, hours: packageHours.optional() }).parse(req.body);

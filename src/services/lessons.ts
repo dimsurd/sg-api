@@ -150,7 +150,11 @@ export async function adminLessons(q: z.infer<typeof rangeSchema> & { tutorId?: 
   );
 }
 
-/** Student schedule for a paid class (caller checks access), flagged with their own participation. */
+/**
+ * Student schedule for a paid class (caller checks access), flagged with their own participation.
+ * Lessons the student isn't in that started before they first paid are left out:
+ * they belong to before the student joined, not to "not enough hours".
+ */
 export async function studentSchedule(enrollmentId: string, classId: string) {
   return many(
     pool,
@@ -161,6 +165,10 @@ export async function studentSchedule(enrollmentId: string, classId: string) {
                      WHERE lp.lesson_id = l.id AND lp.enrollment_id = $2) AS is_participant
        FROM lessons l JOIN users t ON t.id = l.tutor_id
       WHERE l.class_id = $1
+        AND (
+          EXISTS (SELECT 1 FROM lesson_participants lp WHERE lp.lesson_id = l.id AND lp.enrollment_id = $2)
+          OR l.starts_at >= (SELECT min(i.paid_at) FROM invoices i WHERE i.enrollment_id = $2 AND i.status = 'paid')
+        )
       ORDER BY l.starts_at`,
     [classId, enrollmentId],
   );
