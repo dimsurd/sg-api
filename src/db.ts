@@ -12,6 +12,13 @@ pg.types.setTypeParser(pg.types.builtins.DATE, (v) => v);
 // serialises the same way; WIB is applied explicitly in SQL (wib_month) and in the UI.
 export const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 10, options: '-c TimeZone=UTC' });
 
+// An idle client can be dropped by the server (restart, failover, admin kill). Without a
+// listener, pg re-emits that as an unhandled 'error' event and the whole process exits.
+// The pool already discards the broken client and opens a new one on the next query.
+pool.on('error', (err) => {
+  console.error('[db] idle client error, connection discarded:', err.message);
+});
+
 export type Db = pg.Pool | pg.PoolClient;
 
 /** Run fn inside a transaction; rolls back on any thrown error. */
