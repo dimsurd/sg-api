@@ -4,7 +4,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [ -f ../.env ]; then
+# Only fall back to .env when DATABASE_URL is not given explicitly (tests pass their own).
+if [ -z "${DATABASE_URL:-}" ] && [ -f ../.env ]; then
   set -a; source ../.env; set +a
 fi
 
