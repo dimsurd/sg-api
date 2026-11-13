@@ -2,7 +2,7 @@
   "name": "sg-api",
   "version": "1.0.0",
   "private": true,
-  "description": "Star Generation — Group Class Enrollment & Billing API",
+  "description": "Star Generation \u2014 Group Class Enrollment & Billing API",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -10,7 +10,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "db:reset": "bash db/reset.sh",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:seed:catalog": "bash db/seed-catalog.sh"
   },
   "engines": {
     "node": ">=20"

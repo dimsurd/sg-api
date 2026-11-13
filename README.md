@@ -27,6 +27,8 @@ All passwords are `Password123!`. There is no sign-up flow.
 
 **Math Group A**: capacity 2, Rp150,000/h for students, Rp100,000/h for the tutor, 12-hour packages.
 
+**Optional demo catalogue.** `pnpm db:seed:catalog` adds the 16 live group classes from [stargeneration.id](https://www.stargeneration.id/our-programs?tab=group), so the catalogue looks real in a demo. Run it after `pnpm db:reset`. It's kept out of the default seed because the brief asks for exactly one class, and the tests depend on that. Prices come from the site: the student rate is the price per session ÷ session length. Tutor rates (60% of the student rate) and capacities (6) are assumptions, because the site doesn't publish them. Details are in [`db/seed-catalog.sql`](db/seed-catalog.sql).
+
 Seed dates are relative to *today*, so the demo always has:
 - two months ago: an approved logbook with earnings
 - last month: a submitted logbook waiting for the admin
