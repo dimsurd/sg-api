@@ -45,11 +45,23 @@ git clone git@github.com:dimsurd/sg-app.git
 git clone git@github.com:dimsurd/sg-backoffice.git
 ```
 
+### 0. Database user (once)
+
+Use a dedicated role that owns only this project's databases; it needs `CREATEDB`, because `db:reset` and the test setups create their own databases. As a Postgres superuser:
+
+```sql
+CREATE ROLE sg_app LOGIN CREATEDB PASSWORD 'choose-a-password';
+```
+
+Then put it in `sg-api/.env`: `DATABASE_URL=postgres://sg_app:choose-a-password@localhost:5432/star_generation`. The API tests (`star_generation_test`) and the e2e suite (`star_generation_e2e`) reuse the same server and credentials. A local Postgres that trusts localhost without a password also works with `postgres://localhost:5432/star_generation`.
+
+Close other tools (e.g. DBeaver) that are connected to the database before running `pnpm db:reset`: it drops and recreates the database.
+
 ### 1. API (terminal 1)
 
 ```bash
 cd sg-api
-cp .env.example .env          # set DATABASE_URL if your Postgres isn't on localhost:5432 without a password
+cp .env.example .env          # set DATABASE_URL (see step 0)
 pnpm install
 pnpm db:reset                 # drops/creates the database, loads db/schema.sql and db/seed.sql
 pnpm dev                      # http://localhost:4000  ·  docs at /docs

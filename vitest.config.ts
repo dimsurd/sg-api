@@ -1,6 +1,11 @@
 import { defineConfig } from 'vitest/config';
 
-const TEST_DB = process.env.TEST_DATABASE_URL ?? 'postgres://localhost:5432/star_generation_test';
+import 'dotenv/config';
+
+/** Same server and credentials as .env's DATABASE_URL, but its own database. */
+const base = process.env.DATABASE_URL ?? 'postgres://localhost:5432/star_generation';
+const TEST_DB = process.env.TEST_DATABASE_URL ?? base.replace(/\/[^/?]+(\?|$)/, '/star_generation_test$1');
+process.env.TEST_DATABASE_URL = TEST_DB; // global-setup reads it
 
 export default defineConfig({
   test: {
