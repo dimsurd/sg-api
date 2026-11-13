@@ -102,6 +102,20 @@
 - margin forecasting from future schedules
 - per-student attendance (everyone booked into a lesson is charged for it)
 
+## Extra improvement: AI class advisor (student app)
+
+**Problem:** with a growing catalogue (school support, Cambridge, olympiad, by grade and day), a student or parent has to work out which class fits. Today that's a WhatsApp question to the admin.
+
+**What it does:** an *Ask AI* button on Home and Explore opens a chat. The student says their grade, goal and free days in Indonesian or English, and the advisor suggests 1–3 classes, shown as the usual class cards with *Enroll*. Quick-reply chips keep it short on a phone.
+
+**How it stays trustworthy:**
+- **Grounded in the live catalogue:** the model only sees active classes (with seats, prices and upcoming lesson times) under short refs, and every pick is checked against the catalogue. It can't invent a class, and full classes are never offered.
+- **Nothing it says changes data:** enrolling still goes through the normal flow and rules.
+- **Privacy and cost:** only the student's first name is sent, the key stays in the API, and there's a per-student rate limit.
+- **Optional:** works with any OpenAI-compatible endpoint (`LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`); without a key the button doesn't appear. Tests stub the model.
+
+**Left out:** saving chats, and matching on a student's past classes.
+
 ## What I'd build next with another day
 
 1. **Reminders**: WhatsApp or email for invoices due or overdue, students low on hours, and tutors with lessons not yet logged.
@@ -109,4 +123,4 @@
 3. **Attendance**: record absent students per lesson, with a policy for whether absence is charged.
 4. **Refunds and package expiry rules**, if the business wants them.
 5. **Shared `@sg/ui` package** for the design system, plus Playwright end-to-end tests across all three apps.
-6. **Production hardening**: login rate limiting, password reset, deployment (API and Postgres on Railway or Fly; frontends on Vercel), and structured logging.
+6. **Production hardening**: login rate limiting, password reset, a scripted deploy, database backups, and structured logging. (The demo runs the API and Postgres on a VPS behind nginx with HTTPS, and the frontends on Vercel.)

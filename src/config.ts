@@ -8,6 +8,8 @@ function required(name: string): string {
 
 export const config = {
   port: Number(process.env.PORT ?? 4000),
+  /** Bind address; set HOST=127.0.0.1 behind a reverse proxy. Defaults to all interfaces. */
+  host: process.env.HOST || undefined,
   databaseUrl: required('DATABASE_URL'),
   jwtSecret: required('JWT_SECRET'),
   corsOrigins: (process.env.CORS_ORIGINS ?? 'http://localhost:3000,http://localhost:3001')

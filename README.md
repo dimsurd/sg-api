@@ -2,6 +2,8 @@
 
 Three role-based apps for group classes: students buy hour packages and pay before they get access, tutors schedule lessons and write monthly logbooks, and admins approve logbooks, which is what pays tutors.
 
+**Live demo:** [back office](https://sg-backoffice-kappa.vercel.app/login) · [student & tutor app](https://sg-app-mu-ruddy.vercel.app/login) · API on a VPS at https://sg-api.yumefootwear.com ([docs](https://sg-api.yumefootwear.com/docs)). Logins are below.
+
 | Repo | What | Port |
 |---|---|---|
 | **[sg-api](https://github.com/dimsurd/sg-api)** (this repo) | Express + TypeScript API, PostgreSQL schema & seed, docs | 4000 |
@@ -9,7 +11,7 @@ Three role-based apps for group classes: students buy hour packages and pay befo
 | [sg-backoffice](https://github.com/dimsurd/sg-backoffice) | Next.js back office for **admins** | 3001 |
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): data model, where business rules are enforced, and the design system
-- [DECISIONS.md](DECISIONS.md): answers to the open decisions, the improvement, and what's next
+- [DECISIONS.md](DECISIONS.md): answers to the open decisions, the improvements (Money Dashboard, AI class advisor), and what's next
 - API reference: [`openapi.yaml`](openapi.yaml), served as Swagger UI at http://localhost:4000/docs
 
 ## Seeded logins
