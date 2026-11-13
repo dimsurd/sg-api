@@ -103,6 +103,7 @@ describe('responses match openapi.yaml', () => {
       [tutor, `/tutor/classes/${IDS.class}/logbooks/${month!.m}`, '/tutor/classes/{classId}/logbooks/{month}'],
       [tutor, '/tutor/earnings', '/tutor/earnings'],
       [s1, '/student/classes/available', '/student/classes/available'],
+      [s1, '/student/assistant', '/student/assistant'],
       [s1, '/student/invoices', '/student/invoices'],
       [s1, '/student/classes', '/student/classes'],
       [s1, `/student/classes/${IDS.class}/schedule`, '/student/classes/{id}/schedule'],

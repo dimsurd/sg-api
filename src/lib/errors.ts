@@ -17,3 +17,6 @@ export const forbidden = (message = 'You do not have access to this') =>
 export const notFound = (what = 'Resource') => new HttpError(404, 'not_found', `${what} not found`);
 export const conflict = (message: string, details?: unknown) =>
   new HttpError(409, 'conflict', message, details);
+export const tooManyRequests = (message: string) => new HttpError(429, 'too_many_requests', message);
+export const serviceUnavailable = (message: string) => new HttpError(503, 'unavailable', message);
+export const badGateway = (message: string) => new HttpError(502, 'upstream_error', message);

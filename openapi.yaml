@@ -667,6 +667,69 @@ paths:
               schema: { type: object, required: [invoice], properties: { invoice: { $ref: '#/components/schemas/PackageInvoice' } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /student/assistant:
+    get:
+      tags: [Student]
+      summary: Whether the AI class advisor is available
+      description: The advisor is optional; it's enabled when the API has an LLM key configured.
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      responses:
+        '200':
+          description: Advisor status
+          content:
+            application/json:
+              schema: { type: object, required: [enabled], properties: { enabled: { type: boolean } } }
+    post:
+      tags: [Student]
+      summary: Ask the AI class advisor which classes suit me
+      description: |
+        Stateless: send the whole chat (max 20 messages, last one from the student). The model only
+        sees the live catalogue and its picks are checked against it, so `classes` are always real,
+        joinable catalogue classes (never full ones, max 3). Rate limited per student (20 per 10 min).
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  minItems: 1
+                  maxItems: 20
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role: { type: string, enum: [user, assistant] }
+                      content: { type: string, minLength: 1, maxLength: 1000 }
+                      classIds:
+                        type: array
+                        maxItems: 5
+                        description: Classes the advisor recommended in that assistant turn
+                        items: { $ref: '#/components/schemas/Id' }
+            example:
+              messages: [{ role: user, content: Grade 8, olympiad math, Thursday or Friday }]
+      responses:
+        '200':
+          description: The advisor's reply
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reply, classes, suggestions]
+                properties:
+                  reply: { type: string }
+                  classes: { type: array, maxItems: 3, items: { $ref: '#/components/schemas/CatalogueClass' } }
+                  suggestions: { type: array, maxItems: 4, items: { type: string }, description: Quick replies the student can tap }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { description: Too many questions in a short time, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '502': { description: The model failed or gave an unusable answer, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '503': { description: Advisor not configured, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /student/invoices:
     get:
       tags: [Student]

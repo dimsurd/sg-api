@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { idParams, packageHours, uuid } from '../lib/validation.js';
 import { currentUser, requireRole } from '../middleware/auth.js';
+import * as assistant from '../services/assistant.js';
 import * as billing from '../services/billing.js';
 import * as classes from '../services/classes.js';
 import * as lessons from '../services/lessons.js';
@@ -22,6 +23,14 @@ studentRouter.post('/enrollments/:id/packages', async (req, res) => {
   const { id } = idParams.parse(req.params);
   const { hours } = billing.packageSchema.parse(req.body ?? {});
   res.status(201).json({ invoice: await billing.buyPackage(currentUser(req), id, hours) });
+});
+
+// AI class advisor (optional; enabled when an LLM key is configured) ----------
+studentRouter.get('/assistant', (_req, res) => {
+  res.json(assistant.assistantStatus());
+});
+studentRouter.post('/assistant', async (req, res) => {
+  res.json(await assistant.advise(currentUser(req), assistant.assistantRequestSchema.parse(req.body)));
 });
 
 // Invoices -------------------------------------------------------------------

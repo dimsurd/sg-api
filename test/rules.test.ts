@@ -2,7 +2,8 @@
  * Business rules from the brief, tested through the HTTP API against a real
  * PostgreSQL database (constraints and triggers included).
  */
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { config } from '../src/config.js';
 import { pool } from '../src/db.js';
 import request from 'supertest';
 import { IDS, app, loginAs, q, resetDb, wib } from './helpers.js';
@@ -360,5 +361,62 @@ describe('money dashboard', () => {
     expect(pkg.status).toBe(201);
     // A second unpaid package on the same enrollment is refused.
     expect((await admin.post(`/admin/enrollments/${s1Enrollment}/packages`, {})).status).toBe(409);
+  });
+});
+
+describe('AI class advisor', () => {
+  // Never call a real model in tests: stub the OpenAI-compatible endpoint.
+  const llm = config.llm as { apiKey: string; baseUrl: string; model: string };
+  const saved = { ...llm };
+  function stubModel(answer: object) {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(answer) } }] }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+  beforeEach(() => Object.assign(llm, { apiKey: 'test-key', baseUrl: 'http://llm.test/v1', model: 'test-model' }));
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Object.assign(llm, saved);
+  });
+  const ask = (content: string) => ({ messages: [{ role: 'user', content }] });
+
+  it('only returns real, joinable catalogue classes and never leaks refs', async () => {
+    const fetchMock = stubModel({ reply: 'Try c1 for grade 8 math.', classRefs: ['c1', 'c99'], suggestions: ['More about c1?'] });
+    const s2 = await loginAs('student2');
+    const res = await s2.post('/student/assistant', ask('grade 8 math please'));
+    expect(res.status).toBe(200);
+    expect(res.body.classes.map((c: { id: string }) => c.id)).toEqual([IDS.class]); // c99 doesn't exist
+    expect(res.body.reply).toBe('Try Math Group A for grade 8 math.');
+    expect(res.body.suggestions).toEqual(['More about Math Group A?']);
+
+    // The model saw the live catalogue, but no ids, emails or the key in the prompt.
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    const prompt = JSON.stringify(body.messages);
+    expect(prompt).toContain('[c1] Math Group A');
+    expect(prompt).not.toContain(IDS.class);
+    expect(prompt).not.toContain('@stargeneration.test');
+    expect(prompt).not.toContain('test-key');
+
+    // Once the class is full, it isn't offered even if the model picks it.
+    const s3 = await loginAs('student3');
+    await s3.post('/student/enrollments', { classId: IDS.class }); // 2 of 2 seats taken
+    const full = await s2.post('/student/assistant', ask('grade 8 math please'));
+    expect(full.body.classes).toEqual([]);
+  });
+
+  it('validates the chat and is hidden without a key', async () => {
+    stubModel({ reply: 'hi', classRefs: [] });
+    const s2 = await loginAs('student2');
+    const lastFromAssistant = { messages: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }] };
+    expect((await s2.post('/student/assistant', lastFromAssistant)).status).toBe(400);
+    expect((await s2.get('/student/assistant')).body).toEqual({ enabled: true });
+
+    llm.apiKey = '';
+    expect((await s2.get('/student/assistant')).body).toEqual({ enabled: false });
+    expect((await s2.post('/student/assistant', ask('hi'))).status).toBe(503);
+    // Students only.
+    expect((await (await loginAs('tutor1')).post('/student/assistant', ask('hi'))).status).toBe(403);
   });
 });
