@@ -1,0 +1,1333 @@
+openapi: 3.1.0
+info:
+  title: Star Generation — Group Class Enrollment & Billing API
+  version: 1.0.0
+  description: |
+    REST API behind the Star Generation app (tutors & students, PWA) and back office (admins).
+
+    **Conventions**
+    - All JSON is camelCase.
+    - Money is Indonesian Rupiah as whole integers (no decimals). Durations are in minutes.
+    - Timestamps are ISO 8601. Send times with an explicit offset, normally WIB: `2026-11-20T16:00:00+07:00`.
+      Responses are UTC (`Z`); clients display them in `Asia/Jakarta`.
+    - A "month" is `YYYY-MM` in WIB.
+
+    **Authentication**
+    `POST /auth/login` sets an httpOnly session cookie. Every request must send the
+    `X-SG-Client` header (`app` or `backoffice`) so the API reads the right cookie;
+    the back office only accepts admins and the app only accepts tutors and students.
+
+    **Errors** always look like `{ "error": { "code", "message", "details?" } }`.
+    Business-rule violations (full class, overlapping lesson, approved logbook…) are `409`.
+servers:
+  - url: http://localhost:4000
+    description: Local development
+tags:
+  - name: Auth
+  - name: Admin · Classes
+  - name: Admin · Billing
+  - name: Admin · Lessons
+  - name: Admin · Logbooks
+  - name: Admin · Reports
+  - name: Tutor
+  - name: Student
+
+security:
+  - appSession: []
+  - backofficeSession: []
+
+paths:
+  # ---------------------------------------------------------------- Auth
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in with a seeded account
+      security: []
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, example: admin@stargeneration.test }
+                password: { type: string, example: Password123! }
+      responses:
+        '200':
+          description: Logged in. The session cookie (`sg_app_session` or `sg_bo_session`) is set.
+          content:
+            application/json:
+              schema: { type: object, required: [user], properties: { user: { $ref: '#/components/schemas/AuthUser' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Log out (clears the session cookie)
+      security: []
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      responses:
+        '204': { description: Logged out }
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      responses:
+        '200':
+          description: The logged-in user
+          content:
+            application/json:
+              schema: { type: object, required: [user], properties: { user: { $ref: '#/components/schemas/AuthUser' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ---------------------------------------------------------------- Admin · Classes
+  /admin/classes:
+    get:
+      tags: [Admin · Classes]
+      summary: List classes
+      security: [{ backofficeSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      responses:
+        '200':
+          description: All classes with seat counts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [classes]
+                properties: { classes: { type: array, items: { $ref: '#/components/schemas/AdminClass' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Admin · Classes]
+      summary: Create a class
+      security: [{ backofficeSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ClassCreate' } } }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { type: object, required: [class], properties: { class: { $ref: '#/components/schemas/AdminClass' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/classes/{id}:
+    parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+    get:
+      tags: [Admin · Classes]
+      summary: Get a class
+      security: [{ backofficeSession: [] }]
+      responses:
+        '200':
+          description: The class
+          content:
+            application/json:
+              schema: { type: object, required: [class], properties: { class: { $ref: '#/components/schemas/AdminClass' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Admin · Classes]
+      summary: Update a class
+      description: |
+        - **Rates** only affect what happens next: paid packages keep their invoice rate and
+          already-scheduled lessons keep their tutor rate.
+        - **Capacity** cannot go below the seats already taken (409).
+        - **Tutor** change moves upcoming lessons to the new tutor at the class tutor rate; past
+          lessons and earnings stay with whoever taught them. Rejected (409, `details.clashes`) if
+          the new tutor has a clashing lesson.
+      security: [{ backofficeSession: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ClassUpdate' } } }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { type: object, required: [class], properties: { class: { $ref: '#/components/schemas/AdminClass' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /admin/tutors:
+    get:
+      tags: [Admin · Classes]
+      summary: List tutors (for assigning classes)
+      security: [{ backofficeSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      responses:
+        '200':
+          description: Active tutors
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tutors]
+                properties: { tutors: { type: array, items: { $ref: '#/components/schemas/Tutor' } } }
+
+  # ---------------------------------------------------------------- Admin · Billing
+  /admin/students:
+    get:
+      tags: [Admin · Billing]
+      summary: Students with their enrollments and hour balances
+      security: [{ backofficeSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      responses:
+        '200':
+          description: All students
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [students]
+                properties: { students: { type: array, items: { $ref: '#/components/schemas/AdminStudent' } } }
+  /admin/invoices:
+    get:
+      tags: [Admin · Billing]
+      summary: List invoices (unpaid first)
+      security: [{ backofficeSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Client' }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/InvoiceStatus' } }
+        - { name: classId, in: query, schema: { $ref: '#/components/schemas/Id' } }
+        - { name: studentId, in: query, schema: { $ref: '#/components/schemas/Id' } }
+      responses:
+        '200':
+          description: Invoices
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invoices]
+                properties: { invoices: { type: array, items: { $ref: '#/components/schemas/Invoice' } } }
+  /admin/invoices/{id}/history:
+    get:
+      tags: [Admin · Billing]
+      summary: Audit trail of an invoice (paid / undone / voided)
+      security: [{ backofficeSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: History, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [history]
+                properties: { history: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } } }
+  /admin/invoices/{id}/mark-paid:
+    post:
+      tags: [Admin · Billing]
+      summary: Record a payment (e.g. bank transfer)
+      description: Activates the enrollment and adds the student to upcoming lessons their balance covers.
+      security: [{ backofficeSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paymentReference]
+              properties: { paymentReference: { type: string, minLength: 3, maxLength: 120, example: BCA transfer 0012 } }
+      responses:
+        '200': { description: Paid, content: { application/json: { schema: { $ref: '#/components/schemas/PaidResult' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /admin/invoices/{id}/undo-paid:
+    post:
+      tags: [Admin · Billing]
+      summary: Undo a payment
+      description: Only while none of the package's hours were used. Drops the latest upcoming lessons if the balance would go negative.
+      security: [{ backofficeSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200':
+          description: Reverted to unpaid
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invoiceId, lessonsDropped]
+                properties: { invoiceId: { $ref: '#/components/schemas/Id' }, lessonsDropped: { type: integer } }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /admin/invoices/{id}/void:
+    post:
+      tags: [Admin · Billing]
+      summary: Void an unpaid invoice
+      description: If the enrollment never had a paid package, the seat is released.
+      security: [{ backofficeSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200':
+          description: Voided
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invoiceId, seatReleased]
+                properties: { invoiceId: { $ref: '#/components/schemas/Id' }, seatReleased: { type: boolean } }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /admin/enrollments/{id}/packages:
+    post:
+      tags: [Admin · Billing]
+      summary: Issue a new package invoice on an existing enrollment
+      description: Defaults to the class's package hours at the current student rate. Only one unpaid package per enrollment (409).
+      security: [{ backofficeSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/Package' }
+      responses:
+        '201':
+          description: Package invoice issued
+          content:
+            application/json:
+              schema: { type: object, required: [invoice], properties: { invoice: { $ref: '#/components/schemas/PackageInvoice' } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ---------------------------------------------------------------- Admin · Lessons
+  /admin/lessons:
+    get:
+      tags: [Admin · Lessons]
+      summary: All lessons
+      security: [{ backofficeSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Client' }
+        - { name: classId, in: query, schema: { $ref: '#/components/schemas/Id' } }
+        - { name: tutorId, in: query, schema: { $ref: '#/components/schemas/Id' } }
+        - { $ref: '#/components/parameters/From' }
+        - { $ref: '#/components/parameters/To' }
+      responses:
+        '200':
+          description: Lessons, earliest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lessons]
+                properties: { lessons: { type: array, items: { $ref: '#/components/schemas/Lesson' } } }
+  /admin/lessons/{id}/cancel:
+    post:
+      tags: [Admin · Lessons]
+      summary: Cancel a lesson that has not ended
+      security: [{ backofficeSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200': { $ref: '#/components/responses/LessonCancelled' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ---------------------------------------------------------------- Admin · Logbooks
+  /admin/logbooks:
+    get:
+      tags: [Admin · Logbooks]
+      summary: Logbooks (submitted first)
+      security: [{ backofficeSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Client' }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/LogbookStatus' } }
+      responses:
+        '200':
+          description: Logbooks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [logbooks]
+                properties: { logbooks: { type: array, items: { $ref: '#/components/schemas/AdminLogbookSummary' } } }
+  /admin/logbooks/{id}:
+    get:
+      tags: [Admin · Logbooks]
+      summary: Logbook with entries, review history and the tutor earnings preview
+      security: [{ backofficeSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: The logbook
+          content:
+            application/json:
+              schema: { type: object, required: [logbook], properties: { logbook: { $ref: '#/components/schemas/AdminLogbookDetail' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /admin/logbooks/{id}/request-changes:
+    post:
+      tags: [Admin · Logbooks]
+      summary: Send a submitted logbook back to the tutor with a comment
+      security: [{ backofficeSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [comment]
+              properties: { comment: { type: string, minLength: 5, maxLength: 2000 } }
+      responses:
+        '200': { $ref: '#/components/responses/LogbookStatusChanged' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /admin/logbooks/{id}/approve:
+    post:
+      tags: [Admin · Logbooks]
+      summary: Approve a submitted logbook
+      description: |
+        Records tutor earnings once per lesson (`tutor rate × lesson hours`), makes the logbook
+        read-only and visible to students. Idempotent: approving again returns
+        `alreadyApproved: true` and records nothing.
+      security: [{ backofficeSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { comment: { type: string, maxLength: 2000 } } }
+      responses:
+        '200':
+          description: Approved (or already approved)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [logbookId, status, alreadyApproved, earningsRecorded]
+                properties:
+                  logbookId: { $ref: '#/components/schemas/Id' }
+                  status: { type: string, const: approved }
+                  alreadyApproved: { type: boolean }
+                  earningsRecorded: { type: integer, description: Number of lessons whose earnings were written now }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ---------------------------------------------------------------- Admin · Reports
+  /admin/earnings:
+    get:
+      tags: [Admin · Reports]
+      summary: Tutor earnings (all tutors, or one)
+      security: [{ backofficeSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Client' }
+        - { name: tutorId, in: query, schema: { $ref: '#/components/schemas/Id' } }
+      responses:
+        '200': { description: Earnings, content: { application/json: { schema: { $ref: '#/components/schemas/Earnings' } } } }
+  /admin/reports/overview:
+    get:
+      tags: [Admin · Reports]
+      summary: Money dashboard — unpaid invoices, hour balances, class profitability
+      security: [{ backofficeSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Client' }
+        - { name: month, in: query, description: Filter class financials and KPIs to a WIB month, schema: { $ref: '#/components/schemas/Month' } }
+        - { name: classId, in: query, schema: { $ref: '#/components/schemas/Id' } }
+      responses:
+        '200': { description: Overview, content: { application/json: { schema: { $ref: '#/components/schemas/Overview' } } } }
+
+  # ---------------------------------------------------------------- Tutor
+  /tutor/classes:
+    get:
+      tags: [Tutor]
+      summary: My assigned classes (no student rates)
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      responses:
+        '200':
+          description: Classes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [classes]
+                properties: { classes: { type: array, items: { $ref: '#/components/schemas/TutorClass' } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /tutor/classes/{id}:
+    get:
+      tags: [Tutor]
+      summary: One of my classes, with its active students and their hours left
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: Class
+          content:
+            application/json:
+              schema: { type: object, required: [class], properties: { class: { $ref: '#/components/schemas/TutorClassDetail' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /tutor/lessons:
+    get:
+      tags: [Tutor]
+      summary: My lessons
+      security: [{ appSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Client' }
+        - { name: classId, in: query, schema: { $ref: '#/components/schemas/Id' } }
+        - { $ref: '#/components/parameters/From' }
+        - { $ref: '#/components/parameters/To' }
+      responses:
+        '200':
+          description: Lessons, earliest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lessons]
+                properties: { lessons: { type: array, items: { $ref: '#/components/schemas/Lesson' } } }
+    post:
+      tags: [Tutor]
+      summary: Schedule a lesson
+      description: |
+        Times are WIB. End must follow start; a tutor's lessons cannot overlap (409).
+        Every active student whose available balance covers the full lesson is added; the rest are returned in `skipped`.
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - type: object
+                  required: [classId]
+                  properties: { classId: { $ref: '#/components/schemas/Id' } }
+                - { $ref: '#/components/schemas/LessonTimes' }
+      responses:
+        '201': { description: Scheduled, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tutor/lessons/{id}:
+    patch:
+      tags: [Tutor]
+      summary: Reschedule an upcoming lesson
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/LessonTimes' } } }
+      responses:
+        '200': { description: Rescheduled, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tutor/lessons/{id}/cancel:
+    post:
+      tags: [Tutor]
+      summary: Cancel one of my lessons that has not ended
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200': { $ref: '#/components/responses/LessonCancelled' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tutor/logbooks:
+    get:
+      tags: [Tutor]
+      summary: Logbook months for my classes (including months not started yet)
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      responses:
+        '200':
+          description: One row per class and month
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [logbooks]
+                properties: { logbooks: { type: array, items: { $ref: '#/components/schemas/TutorLogbookListItem' } } }
+  /tutor/classes/{classId}/logbooks/{month}:
+    get:
+      tags: [Tutor]
+      summary: A month's logbook with every lesson, its entry and what blocks submission
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/ClassId' }, { $ref: '#/components/parameters/MonthPath' }]
+      responses:
+        '200':
+          description: Logbook month
+          content:
+            application/json:
+              schema: { type: object, required: [logbook], properties: { logbook: { $ref: '#/components/schemas/TutorLogbookMonth' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /tutor/classes/{classId}/logbooks/{month}/entries/{lessonId}:
+    put:
+      tags: [Tutor]
+      summary: Create or update the entry for one ended lesson
+      description: Creates the month's logbook if needed. 409 if the lesson has not ended, is cancelled, or the logbook is submitted/approved.
+      security: [{ appSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Client' }
+        - { $ref: '#/components/parameters/ClassId' }
+        - { $ref: '#/components/parameters/MonthPath' }
+        - { name: lessonId, in: path, required: true, schema: { $ref: '#/components/schemas/Id' } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/LogbookEntryInput' } } }
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entry]
+                properties:
+                  entry:
+                    allOf:
+                      - { $ref: '#/components/schemas/LogbookEntry' }
+                      - { type: object, required: [lessonId], properties: { lessonId: { $ref: '#/components/schemas/Id' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tutor/classes/{classId}/logbooks/{month}/submit:
+    post:
+      tags: [Tutor]
+      summary: Finalise the month and submit it for approval
+      description: Requires every lesson in the month to have ended and have an entry (409 with `details.blockers` otherwise).
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/ClassId' }, { $ref: '#/components/parameters/MonthPath' }]
+      responses:
+        '200': { $ref: '#/components/responses/LogbookStatusChanged' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tutor/earnings:
+    get:
+      tags: [Tutor]
+      summary: My earnings per lesson, per month and in total (approved vs pending)
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      responses:
+        '200': { description: Earnings, content: { application/json: { schema: { $ref: '#/components/schemas/Earnings' } } } }
+
+  # ---------------------------------------------------------------- Student
+  /student/classes/available:
+    get:
+      tags: [Student]
+      summary: Class catalogue with seats left and my enrollment status
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      responses:
+        '200':
+          description: Active classes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [classes]
+                properties: { classes: { type: array, items: { $ref: '#/components/schemas/CatalogueClass' } } }
+  /student/enrollments:
+    post:
+      tags: [Student]
+      summary: Enroll in a class (reserves a seat and issues the first package invoice)
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [classId]
+              properties:
+                classId: { $ref: '#/components/schemas/Id' }
+                hours: { $ref: '#/components/schemas/PackageHours' }
+      responses:
+        '201':
+          description: Enrolled; pay the invoice to get access
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrollmentId, invoice]
+                properties:
+                  enrollmentId: { $ref: '#/components/schemas/Id' }
+                  invoice: { $ref: '#/components/schemas/PackageInvoice' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /student/enrollments/{id}/packages:
+    post:
+      tags: [Student]
+      summary: Buy another package for a class I'm enrolled in
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/Package' }
+      responses:
+        '201':
+          description: Package invoice issued
+          content:
+            application/json:
+              schema: { type: object, required: [invoice], properties: { invoice: { $ref: '#/components/schemas/PackageInvoice' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /student/invoices:
+    get:
+      tags: [Student]
+      summary: My invoices
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      responses:
+        '200':
+          description: Invoices, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invoices]
+                properties: { invoices: { type: array, items: { $ref: '#/components/schemas/Invoice' } } }
+  /student/invoices/{id}/pay:
+    post:
+      tags: [Student]
+      summary: Pay an invoice (simulated — no payment gateway)
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: Paid, content: { application/json: { schema: { $ref: '#/components/schemas/PaidResult' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /student/classes:
+    get:
+      tags: [Student]
+      summary: Classes I have paid for, with my hours balance
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }]
+      responses:
+        '200':
+          description: Paid classes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [classes]
+                properties: { classes: { type: array, items: { $ref: '#/components/schemas/StudentClass' } } }
+  /student/classes/{id}/schedule:
+    get:
+      tags: [Student]
+      summary: Schedule of a paid class
+      description: 404 unless I have paid for this class.
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: Lessons, earliest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lessons]
+                properties: { lessons: { type: array, items: { $ref: '#/components/schemas/StudentLesson' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /student/classes/{id}/logbooks:
+    get:
+      tags: [Student]
+      summary: Approved logbooks of a paid class
+      description: Draft, submitted and returned logbooks are never included.
+      security: [{ appSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/Client' }, { $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: Approved logbooks, newest month first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [logbooks]
+                properties: { logbooks: { type: array, items: { $ref: '#/components/schemas/StudentLogbook' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    appSession: { type: apiKey, in: cookie, name: sg_app_session, description: "Tutor/student session (send `X-SG-Client: app`)" }
+    backofficeSession: { type: apiKey, in: cookie, name: sg_bo_session, description: "Admin session (send `X-SG-Client: backoffice`)" }
+
+  parameters:
+    Client:
+      name: X-SG-Client
+      in: header
+      required: true
+      description: Which frontend is calling; selects the session cookie and which roles may log in.
+      schema: { type: string, enum: [app, backoffice] }
+    Id: { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Id' } }
+    ClassId: { name: classId, in: path, required: true, schema: { $ref: '#/components/schemas/Id' } }
+    MonthPath: { name: month, in: path, required: true, schema: { $ref: '#/components/schemas/Month' } }
+    From: { name: from, in: query, description: Lessons starting at or after, schema: { $ref: '#/components/schemas/DateTime' } }
+    To: { name: to, in: query, description: Lessons starting before, schema: { $ref: '#/components/schemas/DateTime' } }
+
+  requestBodies:
+    Reason:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [reason]
+            properties: { reason: { type: string, minLength: 3, maxLength: 500 } }
+    Package:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties: { hours: { $ref: '#/components/schemas/PackageHours' } }
+
+  responses:
+    BadRequest: { description: Invalid input, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Unauthorized: { description: Not logged in, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Forbidden: { description: Wrong role, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound: { description: Not found (or not yours), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Conflict: { description: A business rule prevents this, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    LessonCancelled:
+      description: Cancelled; reserved hours are released
+      content:
+        application/json:
+          schema: { type: object, required: [lessonId], properties: { lessonId: { $ref: '#/components/schemas/Id' } } }
+    LogbookStatusChanged:
+      description: New logbook status
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [logbookId, status]
+            properties: { logbookId: { $ref: '#/components/schemas/Id' }, status: { $ref: '#/components/schemas/LogbookStatus' } }
+
+  schemas:
+    # ---- primitives
+    Id: { type: string, format: uuid }
+    DateTime: { type: string, format: date-time, example: '2026-11-20T16:00:00+07:00' }
+    Month: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$', example: '2026-11' }
+    Idr: { type: integer, description: Indonesian Rupiah, whole number, example: 150000 }
+    Minutes: { type: integer, description: Duration in minutes, example: 90 }
+    PackageHours: { type: integer, minimum: 1, maximum: 200, description: Defaults to the class's package size }
+    Role: { type: string, enum: [admin, tutor, student] }
+    InvoiceStatus: { type: string, enum: [unpaid, paid, void] }
+    EnrollmentStatus: { type: string, enum: [pending_payment, active, cancelled] }
+    LessonStatus: { type: string, enum: [scheduled, cancelled] }
+    LogbookStatus: { type: string, enum: [draft, submitted, changes_requested, approved] }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, enum: [bad_request, validation_error, unauthorized, forbidden, not_found, conflict, internal] }
+            message: { type: string }
+            details: {}
+
+    AuthUser:
+      type: object
+      required: [id, role, email, fullName]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        role: { $ref: '#/components/schemas/Role' }
+        email: { type: string, format: email }
+        fullName: { type: string }
+
+    # ---- classes
+    ClassCreate:
+      type: object
+      required: [name, tutorId, studentRatePerHour, tutorRatePerHour, capacity]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 2000 }
+        tutorId: { $ref: '#/components/schemas/Id' }
+        studentRatePerHour: { $ref: '#/components/schemas/Idr' }
+        tutorRatePerHour: { $ref: '#/components/schemas/Idr' }
+        capacity: { type: integer, minimum: 1, maximum: 100 }
+        defaultPackageHours: { $ref: '#/components/schemas/PackageHours' }
+    ClassUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 2000 }
+        tutorId: { $ref: '#/components/schemas/Id' }
+        studentRatePerHour: { $ref: '#/components/schemas/Idr' }
+        tutorRatePerHour: { $ref: '#/components/schemas/Idr' }
+        capacity: { type: integer, minimum: 1, maximum: 100 }
+        defaultPackageHours: { $ref: '#/components/schemas/PackageHours' }
+        status: { type: string, enum: [active, archived] }
+    AdminClass:
+      type: object
+      required: [id, name, description, status, capacity, defaultPackageHours, studentRatePerHour, tutorRatePerHour, createdAt, updatedAt, tutorId, tutorName, seatsTaken, activeStudents]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+        description: { type: string }
+        status: { type: string, enum: [active, archived] }
+        capacity: { type: integer }
+        defaultPackageHours: { type: integer }
+        studentRatePerHour: { $ref: '#/components/schemas/Idr' }
+        tutorRatePerHour: { $ref: '#/components/schemas/Idr' }
+        createdAt: { $ref: '#/components/schemas/DateTime' }
+        updatedAt: { $ref: '#/components/schemas/DateTime' }
+        tutorId: { $ref: '#/components/schemas/Id' }
+        tutorName: { type: string }
+        seatsTaken: { type: integer, description: Pending-payment + active enrollments }
+        activeStudents: { type: integer }
+    Tutor:
+      type: object
+      required: [id, fullName, email, activeClasses]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        fullName: { type: string }
+        email: { type: string }
+        activeClasses: { type: integer }
+    TutorClass:
+      type: object
+      description: A tutor's view of a class. Never contains student rates or invoice amounts.
+      required: [id, name, description, status, capacity, tutorRatePerHour, activeStudents, nextLessonAt]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+        description: { type: string }
+        status: { type: string, enum: [active, archived] }
+        capacity: { type: integer }
+        tutorRatePerHour: { $ref: '#/components/schemas/Idr' }
+        activeStudents: { type: integer }
+        nextLessonAt: { oneOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+    TutorClassDetail:
+      type: object
+      required: [id, name, description, status, capacity, tutorRatePerHour, students]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+        description: { type: string }
+        status: { type: string, enum: [active, archived] }
+        capacity: { type: integer }
+        tutorRatePerHour: { $ref: '#/components/schemas/Idr' }
+        students:
+          type: array
+          items:
+            type: object
+            required: [studentId, fullName, remainingMinutes, availableMinutes]
+            properties:
+              studentId: { $ref: '#/components/schemas/Id' }
+              fullName: { type: string }
+              remainingMinutes: { $ref: '#/components/schemas/Minutes' }
+              availableMinutes: { $ref: '#/components/schemas/Minutes' }
+    CatalogueClass:
+      type: object
+      required: [id, name, description, capacity, studentRatePerHour, defaultPackageHours, tutorName, seatsTaken, myEnrollmentId, myEnrollmentStatus]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+        description: { type: string }
+        capacity: { type: integer }
+        studentRatePerHour: { $ref: '#/components/schemas/Idr' }
+        defaultPackageHours: { type: integer }
+        tutorName: { type: string }
+        seatsTaken: { type: integer }
+        myEnrollmentId: { oneOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
+        myEnrollmentStatus: { oneOf: [{ $ref: '#/components/schemas/EnrollmentStatus' }, { type: 'null' }] }
+
+    # ---- balances
+    Balance:
+      type: object
+      description: |
+        paid = paid package hours; used = lessons that have ended; reserved = upcoming lessons;
+        remaining = paid − used; available = remaining − reserved (what can still be scheduled).
+      required: [paidMinutes, usedMinutes, reservedMinutes, remainingMinutes, availableMinutes]
+      properties:
+        paidMinutes: { $ref: '#/components/schemas/Minutes' }
+        usedMinutes: { $ref: '#/components/schemas/Minutes' }
+        reservedMinutes: { $ref: '#/components/schemas/Minutes' }
+        remainingMinutes: { $ref: '#/components/schemas/Minutes' }
+        availableMinutes: { $ref: '#/components/schemas/Minutes' }
+    StudentClass:
+      allOf:
+        - { $ref: '#/components/schemas/Balance' }
+        - type: object
+          required: [id, name, description, tutorName, defaultPackageHours, enrollmentId, nextLessonAt, hasUnpaidPackage]
+          properties:
+            id: { $ref: '#/components/schemas/Id' }
+            name: { type: string }
+            description: { type: string }
+            tutorName: { type: string }
+            defaultPackageHours: { type: integer }
+            enrollmentId: { $ref: '#/components/schemas/Id' }
+            nextLessonAt: { oneOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+            hasUnpaidPackage: { type: boolean }
+    AdminStudent:
+      type: object
+      required: [id, fullName, email, enrollments]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        fullName: { type: string }
+        email: { type: string }
+        enrollments:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/Balance' }
+              - type: object
+                required: [enrollmentId, classId, className, status]
+                properties:
+                  enrollmentId: { $ref: '#/components/schemas/Id' }
+                  classId: { $ref: '#/components/schemas/Id' }
+                  className: { type: string }
+                  status: { $ref: '#/components/schemas/EnrollmentStatus' }
+
+    # ---- invoices
+    PackageInvoice:
+      type: object
+      description: One invoice = one package of hours. `amount = hours × ratePerHour` (rate snapshotted at issue).
+      required: [id, invoiceNo, enrollmentId, hours, ratePerHour, amount, status, dueAt, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        invoiceNo: { type: string, example: INV-2026-0002 }
+        enrollmentId: { $ref: '#/components/schemas/Id' }
+        hours: { type: integer }
+        ratePerHour: { $ref: '#/components/schemas/Idr' }
+        amount: { $ref: '#/components/schemas/Idr' }
+        status: { $ref: '#/components/schemas/InvoiceStatus' }
+        dueAt: { $ref: '#/components/schemas/DateTime' }
+        paidAt: { oneOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        markedPaidBy: { oneOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
+        paymentReference: { type: [string, 'null'] }
+        voidedAt: { oneOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        voidReason: { type: [string, 'null'] }
+        createdAt: { $ref: '#/components/schemas/DateTime' }
+    Invoice:
+      allOf:
+        - { $ref: '#/components/schemas/PackageInvoice' }
+        - type: object
+          required: [classId, className, studentId, studentName, isOverdue]
+          properties:
+            classId: { $ref: '#/components/schemas/Id' }
+            className: { type: string }
+            studentId: { $ref: '#/components/schemas/Id' }
+            studentName: { type: string }
+            isOverdue: { type: boolean }
+    PaidResult:
+      type: object
+      required: [invoiceId, lessonsJoined]
+      properties:
+        invoiceId: { $ref: '#/components/schemas/Id' }
+        lessonsJoined: { type: integer, description: Upcoming lessons the student was added to }
+    AuditEntry:
+      type: object
+      required: [action, createdAt, actorName, actorRole]
+      properties:
+        action: { type: string, example: mark_paid }
+        before: {}
+        after: {}
+        createdAt: { $ref: '#/components/schemas/DateTime' }
+        actorName: { type: string }
+        actorRole: { $ref: '#/components/schemas/Role' }
+
+    # ---- lessons
+    LessonTimes:
+      type: object
+      required: [startsAt, endsAt]
+      properties:
+        startsAt: { $ref: '#/components/schemas/DateTime' }
+        endsAt: { $ref: '#/components/schemas/DateTime' }
+    Lesson:
+      type: object
+      required: [id, classId, className, tutorId, tutorName, startsAt, endsAt, durationMinutes, status, hasEnded, participantCount, hasEntry]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        classId: { $ref: '#/components/schemas/Id' }
+        className: { type: string }
+        tutorId: { $ref: '#/components/schemas/Id' }
+        tutorName: { type: string }
+        startsAt: { $ref: '#/components/schemas/DateTime' }
+        endsAt: { $ref: '#/components/schemas/DateTime' }
+        durationMinutes: { $ref: '#/components/schemas/Minutes' }
+        status: { $ref: '#/components/schemas/LessonStatus' }
+        cancelReason: { type: [string, 'null'] }
+        cancelledAt: { oneOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        hasEnded: { type: boolean }
+        participantCount: { type: integer }
+        hasEntry: { type: boolean }
+    StudentLesson:
+      type: object
+      required: [id, startsAt, endsAt, durationMinutes, status, tutorName, hasEnded, isParticipant]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        startsAt: { $ref: '#/components/schemas/DateTime' }
+        endsAt: { $ref: '#/components/schemas/DateTime' }
+        durationMinutes: { $ref: '#/components/schemas/Minutes' }
+        status: { $ref: '#/components/schemas/LessonStatus' }
+        cancelReason: { type: [string, 'null'] }
+        tutorName: { type: string }
+        hasEnded: { type: boolean }
+        isParticipant: { type: boolean, description: False when the student had no hours left for it }
+    ScheduleResult:
+      type: object
+      required: [lessonId, added, skipped]
+      properties:
+        lessonId: { $ref: '#/components/schemas/Id' }
+        added: { type: integer, description: Students charged for this lesson }
+        skipped:
+          type: array
+          description: Students without enough hours (they need a new package)
+          items:
+            type: object
+            required: [enrollmentId, studentName, availableMinutes]
+            properties:
+              enrollmentId: { $ref: '#/components/schemas/Id' }
+              studentName: { type: string }
+              availableMinutes: { $ref: '#/components/schemas/Minutes' }
+
+    # ---- logbooks
+    LogbookEntryInput:
+      type: object
+      required: [topic, activities, tutorObservation, futureRecommendation]
+      properties:
+        topic: { type: string, minLength: 1, maxLength: 200 }
+        activities: { type: string, minLength: 1, maxLength: 4000 }
+        tutorObservation: { type: string, minLength: 1, maxLength: 4000 }
+        futureRecommendation: { type: string, minLength: 1, maxLength: 4000 }
+    LogbookEntry:
+      allOf:
+        - { $ref: '#/components/schemas/LogbookEntryInput' }
+        - type: object
+          required: [id, updatedAt]
+          properties:
+            id: { $ref: '#/components/schemas/Id' }
+            updatedAt: { $ref: '#/components/schemas/DateTime' }
+    MonthLesson:
+      type: object
+      required: [id, tutorId, tutorName, startsAt, endsAt, durationMinutes, status, hasEnded, entry]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        tutorId: { $ref: '#/components/schemas/Id' }
+        tutorName: { type: string }
+        startsAt: { $ref: '#/components/schemas/DateTime' }
+        endsAt: { $ref: '#/components/schemas/DateTime' }
+        durationMinutes: { $ref: '#/components/schemas/Minutes' }
+        status: { $ref: '#/components/schemas/LessonStatus' }
+        hasEnded: { type: boolean }
+        entry: { oneOf: [{ $ref: '#/components/schemas/LogbookEntry' }, { type: 'null' }] }
+    Review:
+      type: object
+      required: [action, createdAt, actorName, actorRole]
+      properties:
+        action: { type: string, enum: [submitted, changes_requested, approved] }
+        comment: { type: [string, 'null'] }
+        createdAt: { $ref: '#/components/schemas/DateTime' }
+        actorName: { type: string }
+        actorRole: { $ref: '#/components/schemas/Role' }
+    EarningsPreview:
+      type: object
+      required: [lines, totalMinutes, totalAmount]
+      properties:
+        lines:
+          type: array
+          items:
+            type: object
+            required: [lessonId, startsAt, tutorId, tutorName, minutes, ratePerHour, amount, alreadyRecorded]
+            properties:
+              lessonId: { $ref: '#/components/schemas/Id' }
+              startsAt: { $ref: '#/components/schemas/DateTime' }
+              tutorId: { $ref: '#/components/schemas/Id' }
+              tutorName: { type: string }
+              minutes: { $ref: '#/components/schemas/Minutes' }
+              ratePerHour: { $ref: '#/components/schemas/Idr' }
+              amount: { $ref: '#/components/schemas/Idr' }
+              alreadyRecorded: { type: boolean }
+        totalMinutes: { $ref: '#/components/schemas/Minutes' }
+        totalAmount: { $ref: '#/components/schemas/Idr' }
+    AdminLogbookSummary:
+      type: object
+      required: [id, classId, className, month, status, tutorName, entryCount, earningsTotal]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        classId: { $ref: '#/components/schemas/Id' }
+        className: { type: string }
+        month: { $ref: '#/components/schemas/Month' }
+        status: { $ref: '#/components/schemas/LogbookStatus' }
+        submittedAt: { oneOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        approvedAt: { oneOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        tutorName: { type: string }
+        entryCount: { type: integer }
+        earningsTotal: { $ref: '#/components/schemas/Idr' }
+    AdminLogbookDetail:
+      type: object
+      required: [id, classId, className, month, status, lessons, earningsPreview, reviews]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        classId: { $ref: '#/components/schemas/Id' }
+        className: { type: string }
+        month: { $ref: '#/components/schemas/Month' }
+        status: { $ref: '#/components/schemas/LogbookStatus' }
+        submittedAt: { oneOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        approvedAt: { oneOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        approvedByName: { type: [string, 'null'] }
+        lessons: { type: array, items: { $ref: '#/components/schemas/MonthLesson' } }
+        earningsPreview: { $ref: '#/components/schemas/EarningsPreview' }
+        reviews: { type: array, items: { $ref: '#/components/schemas/Review' } }
+    TutorLogbookListItem:
+      type: object
+      required: [classId, className, month, logbookId, status, lessonCount, endedCount, entryCount]
+      properties:
+        classId: { $ref: '#/components/schemas/Id' }
+        className: { type: string }
+        month: { $ref: '#/components/schemas/Month' }
+        logbookId: { oneOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
+        status: { type: string, enum: [not_started, draft, submitted, changes_requested, approved] }
+        lessonCount: { type: integer }
+        endedCount: { type: integer }
+        entryCount: { type: integer }
+    TutorLogbookMonth:
+      type: object
+      required: [class, month, logbook, status, editable, lessons, blockers, reviews]
+      properties:
+        class:
+          type: object
+          required: [id, name]
+          properties: { id: { $ref: '#/components/schemas/Id' }, name: { type: string } }
+        month: { $ref: '#/components/schemas/Month' }
+        logbook:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [id, status]
+              properties:
+                id: { $ref: '#/components/schemas/Id' }
+                status: { $ref: '#/components/schemas/LogbookStatus' }
+                submittedAt: { oneOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+                approvedAt: { oneOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        status: { $ref: '#/components/schemas/LogbookStatus' }
+        editable: { type: boolean }
+        lessons:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/MonthLesson' }
+              - type: object
+                required: [canEdit]
+                properties: { canEdit: { type: boolean } }
+        blockers: { type: array, items: { type: string }, description: Reasons the month cannot be submitted yet }
+        reviews: { type: array, items: { $ref: '#/components/schemas/Review' } }
+    StudentLogbook:
+      type: object
+      required: [id, month, approvedAt, entries]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        month: { $ref: '#/components/schemas/Month' }
+        approvedAt: { $ref: '#/components/schemas/DateTime' }
+        entries:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/LogbookEntryInput' }
+              - type: object
+                required: [lessonId, startsAt, endsAt]
+                properties:
+                  lessonId: { $ref: '#/components/schemas/Id' }
+                  startsAt: { $ref: '#/components/schemas/DateTime' }
+                  endsAt: { $ref: '#/components/schemas/DateTime' }
+
+    # ---- money
+    Earnings:
+      type: object
+      description: Approved = recorded when the logbook was approved. Pending = lessons held whose logbook is not approved yet (estimate).
+      required: [totals, months, lines]
+      properties:
+        totals:
+          type: object
+          required: [approved, pending, approvedMinutes, pendingMinutes]
+          properties:
+            approved: { $ref: '#/components/schemas/Idr' }
+            pending: { $ref: '#/components/schemas/Idr' }
+            approvedMinutes: { $ref: '#/components/schemas/Minutes' }
+            pendingMinutes: { $ref: '#/components/schemas/Minutes' }
+        months:
+          type: array
+          items:
+            type: object
+            required: [month, approved, pending, lessons]
+            properties:
+              month: { $ref: '#/components/schemas/Month' }
+              approved: { $ref: '#/components/schemas/Idr' }
+              pending: { $ref: '#/components/schemas/Idr' }
+              lessons: { type: integer }
+        lines:
+          type: array
+          items:
+            type: object
+            required: [lessonId, classId, className, tutorId, tutorName, startsAt, month, minutes, ratePerHour, amount, status, logbookStatus]
+            properties:
+              lessonId: { $ref: '#/components/schemas/Id' }
+              classId: { $ref: '#/components/schemas/Id' }
+              className: { type: string }
+              tutorId: { $ref: '#/components/schemas/Id' }
+              tutorName: { type: string }
+              startsAt: { $ref: '#/components/schemas/DateTime' }
+              month: { $ref: '#/components/schemas/Month' }
+              minutes: { $ref: '#/components/schemas/Minutes' }
+              ratePerHour: { $ref: '#/components/schemas/Idr' }
+              amount: { $ref: '#/components/schemas/Idr' }
+              status: { type: string, enum: [approved, pending] }
+              logbookStatus: { type: string, enum: [not_started, draft, submitted, changes_requested, approved] }
+    Overview:
+      type: object
+      required: [kpis, unpaidInvoices, balances, classFinancials]
+      properties:
+        kpis:
+          type: object
+          required: [outstandingAmount, unpaidCount, overdueCount, lowBalanceCount, month, monthBilled, monthDeliveredRevenue, monthMargin]
+          properties:
+            outstandingAmount: { $ref: '#/components/schemas/Idr' }
+            unpaidCount: { type: integer }
+            overdueCount: { type: integer }
+            lowBalanceCount: { type: integer }
+            month: { $ref: '#/components/schemas/Month' }
+            monthBilled: { $ref: '#/components/schemas/Idr' }
+            monthDeliveredRevenue: { $ref: '#/components/schemas/Idr' }
+            monthMargin: { $ref: '#/components/schemas/Idr' }
+        unpaidInvoices:
+          type: array
+          items:
+            type: object
+            required: [id, invoiceNo, amount, hours, dueAt, createdAt, daysOverdue, agingBucket, enrollmentId, classId, className, studentId, studentName]
+            properties:
+              id: { $ref: '#/components/schemas/Id' }
+              invoiceNo: { type: string }
+              amount: { $ref: '#/components/schemas/Idr' }
+              hours: { type: integer }
+              dueAt: { $ref: '#/components/schemas/DateTime' }
+              createdAt: { $ref: '#/components/schemas/DateTime' }
+              daysOverdue: { type: integer }
+              agingBucket: { type: string, enum: [not_due, overdue_1_7, overdue_8_30, overdue_30_plus] }
+              enrollmentId: { $ref: '#/components/schemas/Id' }
+              classId: { $ref: '#/components/schemas/Id' }
+              className: { type: string }
+              studentId: { $ref: '#/components/schemas/Id' }
+              studentName: { type: string }
+        balances:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/Balance' }
+              - type: object
+                required: [enrollmentId, enrollmentStatus, classId, className, defaultPackageHours, studentId, studentName, hasUnpaidPackage, flag]
+                properties:
+                  enrollmentId: { $ref: '#/components/schemas/Id' }
+                  enrollmentStatus: { $ref: '#/components/schemas/EnrollmentStatus' }
+                  classId: { $ref: '#/components/schemas/Id' }
+                  className: { type: string }
+                  defaultPackageHours: { type: integer }
+                  studentId: { $ref: '#/components/schemas/Id' }
+                  studentName: { type: string }
+                  hasUnpaidPackage: { type: boolean }
+                  flag:
+                    type: string
+                    enum: [ok, low, out, awaiting_payment]
+                    description: low = ≤ 2h left or everything left is already booked; out = 0h left
+        classFinancials:
+          type: array
+          items:
+            type: object
+            required: [classId, className, month, billed, deliveredRevenue, deliveredStudentMinutes, lessonsHeld, tutorCostApproved, tutorCostPending, margin, marginPct]
+            properties:
+              classId: { $ref: '#/components/schemas/Id' }
+              className: { type: string }
+              month: { $ref: '#/components/schemas/Month' }
+              billed: { $ref: '#/components/schemas/Idr' }
+              deliveredRevenue: { $ref: '#/components/schemas/Idr' }
+              deliveredStudentMinutes: { $ref: '#/components/schemas/Minutes' }
+              lessonsHeld: { type: integer }
+              tutorCostApproved: { $ref: '#/components/schemas/Idr' }
+              tutorCostPending: { $ref: '#/components/schemas/Idr' }
+              margin: { $ref: '#/components/schemas/Idr' }
+              marginPct: { type: [number, 'null'] }
