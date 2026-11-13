@@ -36,7 +36,8 @@ erDiagram
 - **Money** is IDR in `BIGINT`, and **time** is in minutes, so there are no floats. Every price is snapshotted where it's used: the student rate on each invoice, and the tutor rate on each lesson.
 - **Hours** are derived, never stored as a running total:
   - *paid* = paid invoices
-  - *used* = `lesson_participants` rows for lessons that have ended
+  - *used* = `lesson_participants` rows for lessons that have ended **and** have a logbook entry (the tutor's confirmation)
+  - *awaiting* = ended but not logged yet: not deducted, still held
   - *reserved* = the same for upcoming lessons
 - **Shared views** (`v_enrollment_balance`, `v_invoice_aging`, `v_class_financials`) compute balances, aging and margin once. The student's meter, the tutor's view and the admin dashboard all read them, so their numbers can't disagree.
 

@@ -164,12 +164,13 @@ export async function undoPaid(actorId: string, invoiceId: string, reason: strin
     const inv = await lockInvoice(client, invoiceId);
     if (inv.status !== 'paid') throw conflict('Only a paid invoice can be reverted');
 
-    const bal = await one<{ paid_minutes: number; used_minutes: number }>(
+    const bal = await one<{ paid_minutes: number; used_minutes: number; awaiting_minutes: number }>(
       client,
-      'SELECT paid_minutes, used_minutes FROM v_enrollment_balance WHERE enrollment_id = $1',
+      'SELECT paid_minutes, used_minutes, awaiting_minutes FROM v_enrollment_balance WHERE enrollment_id = $1',
       [inv.enrollment_id],
     );
-    if (bal!.paid_minutes - inv.hours * 60 < bal!.used_minutes) {
+    // Lessons that took place but aren't logged yet still count as hours spent.
+    if (bal!.paid_minutes - inv.hours * 60 < bal!.used_minutes + bal!.awaiting_minutes) {
       throw conflict("Some of this package's hours were already used in lessons, so the payment can't be undone");
     }
 
@@ -277,7 +278,7 @@ export async function adminStudents() {
               'enrollmentId', b.enrollment_id, 'classId', c.id, 'className', c.name,
               'status', b.enrollment_status, 'paidMinutes', b.paid_minutes, 'usedMinutes', b.used_minutes,
               'reservedMinutes', b.reserved_minutes, 'remainingMinutes', b.remaining_minutes,
-              'availableMinutes', b.available_minutes
+              'availableMinutes', b.available_minutes, 'awaitingMinutes', b.awaiting_minutes
             ) ORDER BY c.name) FILTER (WHERE b.enrollment_id IS NOT NULL AND b.enrollment_status <> 'cancelled'), '[]')
               AS enrollments
        FROM users u

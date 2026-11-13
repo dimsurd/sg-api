@@ -8,11 +8,13 @@
   - Amount = `hours × the class's student rate at the moment the package is issued`. The rate is snapshotted on the invoice, so later rate changes never alter it.
   - The package size defaults to the class's package (12h in the seed).
 - **Counting hours:** when a tutor schedules a lesson, every student with a paid, active enrollment whose *available* balance covers the **whole** lesson is added to it (`lesson_participants`).
-  - Those minutes are *reserved* while the lesson is upcoming, and become *used* once it has ended.
+  - Those minutes are *reserved* while the lesson is upcoming.
+  - **Hours only become *used* once the tutor writes the lesson's logbook entry.** A lesson that has ended but isn't logged yet is *awaiting notes*: not deducted from the student, but still held so nobody can be booked beyond what they paid.
   - The balance is always computed from these rows, never kept as a running counter:
     - remaining = paid − used
-    - available = remaining − reserved
-- **Why:** classes are taught offline, so the only reliable record is "this lesson took place and lasted X minutes". Reserving at scheduling time means a student can never be booked into more hours than they paid for.
+    - available = paid − used − awaiting − reserved
+- **Why:** classes are taught offline, so the system can't see whether a lesson really happened. A lesson that passed its end time without taking place (and that the tutor forgot to cancel) would otherwise silently use up students' hours. The logbook entry the tutor already has to write is the proof, so this adds no extra step. It also ties the incentives together: the tutor can't submit the month (and isn't paid) while a lesson has no entry, so a lesson that didn't happen has to be cancelled, which gives the hours back. Reserving at scheduling time still means a student can never be booked into more hours than they paid for.
+  - *Rejected alternative:* counting hours only when the admin approves the month. Stricter, but balances would lag by up to a month and "low on hours" alerts would fire too late.
   - *Trade-off:* a student with 1h left can't join a 1.5h lesson. We charge whole lessons only, rather than invent partial-lesson pricing.
   - Packages don't expire; the brief doesn't mention expiry.
 
@@ -53,7 +55,7 @@
   - The **student** can press *Pay* (simulated, recorded with a `SIMULATED-…` reference).
   - The **admin** can *Mark paid* with a transfer reference, which is how payment actually arrives today.
 - **Effect:** paying activates the enrollment, unlocks the class, and adds the student to upcoming lessons.
-- **Undo:** only an admin can, and only while **none of that package's hours have been used**. Otherwise the student would have received lessons that are no longer paid for. Undoing may remove the student from the latest upcoming lessons.
+- **Undo:** only an admin can, and only while **none of that package's hours have been used** (lessons held but not yet logged count as used here). Otherwise the student would have received lessons that are no longer paid for. Undoing may remove the student from the latest upcoming lessons.
 - **Void:** an unpaid invoice can be voided; if the enrollment was never paid, the seat is released.
 - Every money action requires a reference or reason and is written to `audit_logs`, visible as the invoice *History*.
 - Only one unpaid package per enrollment is allowed, so invoices can't pile up.

@@ -599,18 +599,30 @@ paths:
   /student/classes/available:
     get:
       tags: [Student]
-      summary: Class catalogue with seats left and my enrollment status
+      summary: Class catalogue (paged, searchable) with seats left and my enrollment status
+      description: |
+        Sorted by name. `q` is matched on the server: every word must appear in the class
+        name, description or tutor name (case-insensitive). Page with `limit`/`offset`;
+        `nextOffset` is null on the last page.
       security: [{ appSession: [] }]
-      parameters: [{ $ref: '#/components/parameters/Client' }]
+      parameters:
+        - { $ref: '#/components/parameters/Client' }
+        - { name: q, in: query, schema: { type: string, maxLength: 100 }, example: osn smp friday }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 10 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
       responses:
         '200':
-          description: Active classes
+          description: One page of active classes
           content:
             application/json:
               schema:
                 type: object
-                required: [classes]
-                properties: { classes: { type: array, items: { $ref: '#/components/schemas/CatalogueClass' } } }
+                required: [classes, total, nextOffset]
+                properties:
+                  classes: { type: array, items: { $ref: '#/components/schemas/CatalogueClass' } }
+                  total: { type: integer, description: Matching classes across all pages }
+                  nextOffset: { type: [integer, 'null'], description: Offset of the next page, or null when this is the last }
+        '400': { $ref: '#/components/responses/BadRequest' }
   /student/enrollments:
     post:
       tags: [Student]
@@ -921,12 +933,15 @@ components:
     Balance:
       type: object
       description: |
-        paid = paid package hours; used = lessons that have ended; reserved = upcoming lessons;
-        remaining = paid − used; available = remaining − reserved (what can still be scheduled).
-      required: [paidMinutes, usedMinutes, reservedMinutes, remainingMinutes, availableMinutes]
+        paid = paid package hours; used = lessons that ended and the tutor has logged;
+        awaiting = lessons that ended but aren't logged yet (not deducted, still held);
+        reserved = upcoming lessons; remaining = paid − used;
+        available = paid − used − awaiting − reserved (what can still be scheduled).
+      required: [paidMinutes, usedMinutes, awaitingMinutes, reservedMinutes, remainingMinutes, availableMinutes]
       properties:
         paidMinutes: { $ref: '#/components/schemas/Minutes' }
         usedMinutes: { $ref: '#/components/schemas/Minutes' }
+        awaitingMinutes: { $ref: '#/components/schemas/Minutes' }
         reservedMinutes: { $ref: '#/components/schemas/Minutes' }
         remainingMinutes: { $ref: '#/components/schemas/Minutes' }
         availableMinutes: { $ref: '#/components/schemas/Minutes' }

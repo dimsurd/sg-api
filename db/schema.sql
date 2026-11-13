@@ -337,10 +337,13 @@ CREATE INDEX audit_logs_entity_idx ON audit_logs (entity, entity_id, created_at)
 
 -- Hours balance per enrollment.
 --   paid      = hours of paid packages
---   used      = minutes charged for lessons that have ended (not cancelled)
---   reserved  = minutes charged for future scheduled lessons
---   remaining = paid - used            (what the student "has left")
---   available = paid - used - reserved (what can still be scheduled)
+--   used      = minutes of lessons that ended AND the tutor has logged (the logbook
+--               entry is the proof the lesson happened)
+--   awaiting  = minutes of lessons that ended but have no entry yet — not deducted,
+--               but still held so nobody can be booked beyond what they paid
+--   reserved  = minutes booked in upcoming lessons
+--   remaining = paid - used                         (what the student "has left")
+--   available = paid - used - awaiting - reserved   (what can still be scheduled)
 CREATE VIEW v_enrollment_balance AS
 SELECT
   e.id          AS enrollment_id,
@@ -353,7 +356,8 @@ SELECT
   COALESCE(u.reserved_minutes, 0)::int                                   AS reserved_minutes,
   (COALESCE(p.paid_minutes, 0) - COALESCE(u.used_minutes, 0))::int       AS remaining_minutes,
   (COALESCE(p.paid_minutes, 0) - COALESCE(u.used_minutes, 0)
-     - COALESCE(u.reserved_minutes, 0))::int                             AS available_minutes
+     - COALESCE(u.awaiting_minutes, 0) - COALESCE(u.reserved_minutes, 0))::int AS available_minutes,
+  COALESCE(u.awaiting_minutes, 0)::int                                   AS awaiting_minutes
 FROM enrollments e
 LEFT JOIN LATERAL (
   SELECT sum(i.hours * 60) AS paid_minutes, sum(i.amount) AS paid_amount
@@ -362,10 +366,12 @@ LEFT JOIN LATERAL (
 ) p ON true
 LEFT JOIN LATERAL (
   SELECT
-    sum(lp.minutes_charged) FILTER (WHERE l.ends_at <= now()) AS used_minutes,
-    sum(lp.minutes_charged) FILTER (WHERE l.ends_at >  now()) AS reserved_minutes
+    sum(lp.minutes_charged) FILTER (WHERE l.ends_at <= now() AND le.id IS NOT NULL) AS used_minutes,
+    sum(lp.minutes_charged) FILTER (WHERE l.ends_at <= now() AND le.id IS NULL)     AS awaiting_minutes,
+    sum(lp.minutes_charged) FILTER (WHERE l.ends_at >  now())                        AS reserved_minutes
   FROM lesson_participants lp
   JOIN lessons l ON l.id = lp.lesson_id
+  LEFT JOIN logbook_entries le ON le.lesson_id = l.id
   WHERE lp.enrollment_id = e.id AND l.status = 'scheduled'
 ) u ON true;
 
@@ -388,7 +394,7 @@ WHERE i.status = 'unpaid';
 
 -- Profitability per class per WIB month.
 --   billed            = cash in from packages paid that month
---   delivered_revenue = minutes delivered that month x the student's average paid rate
+--   delivered_revenue = logged (confirmed) minutes that month x the student's average paid rate
 --   tutor_cost_*      = approved earnings, and an estimate for held-but-unapproved lessons
 --   margin            = delivered_revenue - (approved + pending tutor cost)
 CREATE VIEW v_class_financials AS
@@ -411,6 +417,7 @@ delivered AS (
   JOIN lesson_participants lp ON lp.lesson_id = l.id
   JOIN enrollment_rate r      ON r.enrollment_id = lp.enrollment_id
   WHERE l.status = 'scheduled' AND l.ends_at <= now()
+    AND EXISTS (SELECT 1 FROM logbook_entries le WHERE le.lesson_id = l.id) -- confirmed by the tutor
   GROUP BY 1, 2
 ),
 tutor AS (

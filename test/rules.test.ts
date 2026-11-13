@@ -237,6 +237,86 @@ describe('visibility of money', () => {
   });
 });
 
+describe('hours are only used once the tutor logs the lesson', () => {
+  it('keeps an ended-but-unlogged lesson as "awaiting", then counts it when logged', async () => {
+    const tutor = await loginAs('tutor1');
+    const s1 = await loginAs('student1');
+    // A 60-minute lesson that ended 30 minutes ago, inside the current WIB month.
+    const end = new Date(Date.now() - 30 * 60_000);
+    const start = new Date(end.getTime() - 60 * 60_000);
+    const wibMonth = (d: Date) => new Date(d.getTime() + 7 * 3_600_000).toISOString().slice(0, 7);
+    if (wibMonth(start) !== wibMonth(end)) return; // too close to a month boundary to test meaningfully
+    const created = await tutor.post('/tutor/lessons', {
+      classId: IDS.class,
+      startsAt: start.toISOString(),
+      endsAt: end.toISOString(),
+    });
+    expect(created.status).toBe(201);
+
+    const before = (await s1.get('/student/classes')).body.classes[0];
+    expect(before).toMatchObject({ usedMinutes: 360, awaitingMinutes: 60, remainingMinutes: 360 }); // not deducted yet
+
+    await tutor.put(`/tutor/classes/${IDS.class}/logbooks/${wibMonth(start)}/entries/${created.body.lessonId}`, {
+      topic: 'Quadratics',
+      activities: 'Factorising',
+      tutorObservation: 'Good',
+      futureRecommendation: 'Completing the square',
+    });
+    const after = (await s1.get('/student/classes')).body.classes[0];
+    expect(after).toMatchObject({ usedMinutes: 420, awaitingMinutes: 0, remainingMinutes: 300 }); // now counted
+  });
+});
+
+describe('student schedule', () => {
+  it('hides lessons that started before the student joined, keeps ones skipped for hours', async () => {
+    const tutor = await loginAs('tutor1');
+    // A lesson already under way (started 10 minutes ago).
+    const started = await tutor.post('/tutor/lessons', {
+      classId: IDS.class,
+      startsAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+      endsAt: new Date(Date.now() + 80 * 60_000).toISOString(),
+    });
+    expect(started.status).toBe(201);
+
+    // student2 enrolls and pays now: not added to the running lesson, and it isn't shown.
+    const s2 = await loginAs('student2');
+    const { invoice } = (await s2.post('/student/enrollments', { classId: IDS.class })).body;
+    await s2.post(`/student/invoices/${invoice.id}/pay`);
+    const schedule = (await s2.get(`/student/classes/${IDS.class}/schedule`)).body.lessons as { id: string }[];
+    expect(schedule.map((l) => l.id)).not.toContain(started.body.lessonId);
+    expect(schedule.length).toBeGreaterThan(0); // upcoming lessons they joined are there
+
+    // student1 was out of hours for a long lesson scheduled after they paid: still listed, not a participant.
+    const long = await tutor.post('/tutor/lessons', { classId: IDS.class, startsAt: wib(45 * 24), endsAt: wib(45 * 24 + 4) });
+    const s1 = await loginAs('student1');
+    const s1Schedule = (await s1.get(`/student/classes/${IDS.class}/schedule`)).body.lessons as { id: string; isParticipant: boolean }[];
+    expect(s1Schedule.find((l) => l.id === long.body.lessonId)).toMatchObject({ isParticipant: false });
+  });
+});
+
+describe('catalogue paging and search', () => {
+  it('pages with limit/offset and searches every word on the server', async () => {
+    const { readFileSync } = await import('node:fs');
+    await pool.query(readFileSync('db/seed-catalog.sql', 'utf8')); // 17 classes
+    const s1 = await loginAs('student1');
+
+    const first = (await s1.get('/student/classes/available')).body;
+    expect(first.classes).toHaveLength(10); // default page size
+    expect(first).toMatchObject({ total: 17, nextOffset: 10 });
+    const rest = (await s1.get('/student/classes/available?offset=10')).body;
+    expect(rest.classes).toHaveLength(7);
+    expect(rest.nextOffset).toBeNull();
+    const ids = new Set([...first.classes, ...rest.classes].map((c: { id: string }) => c.id));
+    expect(ids.size).toBe(17); // no duplicates, nothing skipped
+
+    const osn = (await s1.get('/student/classes/available?q=osn%20smp%20friday')).body;
+    expect(osn.total).toBe(3);
+    const tutor = (await s1.get('/student/classes/available?q=CITRA&limit=50')).body;
+    expect(tutor.total).toBe(8);
+    expect((await s1.get('/student/classes/available?limit=51')).status).toBe(400);
+  });
+});
+
 describe('input handling', () => {
   it('answers malformed or oversized JSON with 4xx, not 500', async () => {
     const malformed = await request(app)

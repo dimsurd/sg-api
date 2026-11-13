@@ -91,7 +91,7 @@ export async function overview(filter: { month?: string; classId?: string }) {
   const balances = await many<{ remaining_minutes: number; available_minutes: number; flag: string }>(
     pool,
     `SELECT b.enrollment_id, b.enrollment_status, b.paid_minutes, b.used_minutes, b.reserved_minutes,
-            b.remaining_minutes, b.available_minutes,
+            b.remaining_minutes, b.available_minutes, b.awaiting_minutes,
             c.id AS class_id, c.name AS class_name, c.default_package_hours,
             s.id AS student_id, s.full_name AS student_name,
             EXISTS (SELECT 1 FROM invoices i WHERE i.enrollment_id = b.enrollment_id AND i.status = 'unpaid')
