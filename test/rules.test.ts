@@ -4,7 +4,8 @@
  */
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { pool } from '../src/db.js';
-import { IDS, loginAs, q, resetDb, wib } from './helpers.js';
+import request from 'supertest';
+import { IDS, app, loginAs, q, resetDb, wib } from './helpers.js';
 
 beforeEach(resetDb);
 afterAll(() => pool.end());
@@ -233,6 +234,23 @@ describe('visibility of money', () => {
     const s1 = await loginAs('student1');
     expect((await s1.get('/tutor/earnings')).status).toBe(403);
     expect((await s1.get('/admin/reports/overview')).status).toBe(403);
+  });
+});
+
+describe('input handling', () => {
+  it('answers malformed or oversized JSON with 4xx, not 500', async () => {
+    const malformed = await request(app)
+      .post('/auth/login')
+      .set('content-type', 'application/json')
+      .send('{not json');
+    expect(malformed.status).toBe(400);
+    expect(malformed.body.error.message).toMatch(/not valid JSON/);
+
+    const huge = await request(app)
+      .post('/auth/login')
+      .set('content-type', 'application/json')
+      .send(JSON.stringify({ email: 'a@b.c', password: 'x'.repeat(200_000) }));
+    expect(huge.status).toBe(413);
   });
 });
 

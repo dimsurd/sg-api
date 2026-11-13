@@ -35,6 +35,17 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     return;
   }
 
+  // express.json() failures: client errors, not server errors.
+  const bodyErr = err as { type?: string };
+  if (bodyErr.type === 'entity.parse.failed') {
+    res.status(400).json({ error: { code: 'bad_request', message: 'The request body is not valid JSON' } });
+    return;
+  }
+  if (bodyErr.type === 'entity.too.large') {
+    res.status(413).json({ error: { code: 'payload_too_large', message: 'The request body is too large' } });
+    return;
+  }
+
   const pgErr = err as PgError;
   const friendly = pgErr.constraint ? CONSTRAINT_MESSAGES[pgErr.constraint] : undefined;
   switch (pgErr.code) {

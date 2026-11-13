@@ -806,7 +806,7 @@ components:
           type: object
           required: [code, message]
           properties:
-            code: { type: string, enum: [bad_request, validation_error, unauthorized, forbidden, not_found, conflict, internal] }
+            code: { type: string, enum: [bad_request, validation_error, unauthorized, forbidden, not_found, conflict, payload_too_large, internal] }
             message: { type: string }
             details: {}
 
