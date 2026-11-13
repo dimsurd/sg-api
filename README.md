@@ -102,10 +102,14 @@ Other scripts: `pnpm typecheck` in any repo, `pnpm lint` in the frontends, and `
 
 ## A 5-minute walkthrough
 
-1. **student2** (app): Browse → Enroll → Invoices → *Pay* (simulated). The class unlocks, and student2 is added to the 2 upcoming lessons.
-2. **student3** (app): Browse → the class shows **Full**.
-3. **tutor1** (app): Teaching → Math Group A → schedule a lesson (WIB). Try an overlapping time to see it rejected.
-4. **admin** (back office): Logbooks → last month → check the **earnings preview** → *Request changes*.
-5. **tutor1**: the Teaching home shows "sent back". Open it, edit an entry, and *Resubmit*.
-6. **admin**: *Approve*. Earnings are recorded once; approving again changes nothing. **student1** can now read that month's logbook, and tutor1's Earnings moves it from pending to approved.
-7. **admin** Dashboard: unpaid invoices with aging, students low on hours (*Issue package*), and per-class margin.
+Tip: `pnpm db:seed:catalog` first makes Explore look like the real catalogue (17 classes).
+
+1. **student2** (app): Home → **Explore** → Math Group A → *Enroll* → *Pay* the invoice (simulated). The class appears under **My classes** and student2 joins the 2 upcoming lessons.
+2. **student3** (app): Explore → Math Group A shows **Full**.
+3. **tutor1** (app): **My classes** → Math Group A → *Schedule* a lesson (times are WIB). Try an overlapping time to see it rejected.
+4. **admin** (back office): **Logbooks** → last month → check the **earnings preview** → *Request changes* with a comment.
+5. **tutor1**: Home shows the logbook was sent back → open it, edit an entry, *Resubmit for review*.
+6. **admin**: *Approve*. Earnings are recorded once (approving again changes nothing); **student1** can now read that month in My classes → Logbooks, and tutor1's **Earnings** moves it from pending to approved.
+7. **admin** dashboard: unpaid invoices with aging, students low on hours (*Issue package*), and per-class margin.
+
+Hours count as *used* only once the tutor logs the lesson; until then they show as "awaiting tutor notes".

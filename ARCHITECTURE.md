@@ -1,17 +1,17 @@
 # Architecture
 
 ```
- sg-app (Next.js PWA, :3000)          sg-backoffice (Next.js, :3001)
- students + tutors, mobile-first      admins, desktop
-          │  /api/* rewrite (same origin, httpOnly cookie)  │
-          └──────────────────────┬───────────────────────────┘
+ sg-app (Next.js PWA, :3000)            sg-backoffice (Next.js, :3001)
+ students + tutors, mobile-first        admins, desktop
+          │   /api/* rewrite → same-origin httpOnly cookie   │
+          └───────────────────────┬──────────────────────────┘
                      sg-api (Express + TypeScript, :4000)
                      zod validation · role-scoped routers · services
-                                 │  node-postgres, hand-written SQL
-                          PostgreSQL (constraints, triggers, views)
+                                  │  node-postgres, hand-written SQL
+                       PostgreSQL (constraints, triggers, views)
 ```
 
-The API is the only thing that talks to the database. Each frontend proxies `/api/*` to it, so the session cookie is first-party and no CORS is involved. Each client gets its own cookie (`sg_app_session` / `sg_bo_session`): the back office only accepts admins, and the app only accepts tutors and students.
+Only the API talks to the database. Each frontend proxies `/api/*` to it, so the session cookie is first-party (one per client: the back office accepts only admins, the app only tutors and students). `openapi.yaml` (served at `/docs`) is the contract: the frontends generate their types from it, and a contract test fails if a route or response drifts.
 
 ## Data model
 
@@ -33,62 +33,30 @@ erDiagram
   users ||--o{ audit_logs : "money actions"
 ```
 
-- **Money** is IDR in `BIGINT`, and **time** is in minutes, so there are no floats. Every price is snapshotted where it's used: the student rate on each invoice, and the tutor rate on each lesson.
-- **Hours** are derived, never stored as a running total:
-  - *paid* = paid invoices
-  - *used* = `lesson_participants` rows for lessons that have ended **and** have a logbook entry (the tutor's confirmation)
-  - *awaiting* = ended but not logged yet: not deducted, still held
-  - *reserved* = the same for upcoming lessons
-- **Shared views** (`v_enrollment_balance`, `v_invoice_aging`, `v_class_financials`) compute balances, aging and margin once. The student's meter, the tutor's view and the admin dashboard all read them, so their numbers can't disagree.
+- **Money** is IDR in `BIGINT` and **time** is in minutes: no floats. Prices are snapshotted where they're used (student rate on each invoice, tutor rate on each lesson).
+- **Hours are derived, never stored as a counter.** *Paid* = paid invoices; *used* = lessons that ended **and** were logged by the tutor; *awaiting* = ended but not logged (held, not deducted); *reserved* = upcoming lessons.
+- **One set of SQL views** (`v_enrollment_balance`, `v_invoice_aging`, `v_class_financials`) computes balances, aging and margin, so the student, tutor and admin screens can't disagree.
+- Times are UTC `timestamptz`; the API only accepts timestamps with an offset, the UI sends and shows WIB, and logbook months are WIB months.
 
 ## Where business rules are enforced, and why
 
-**Invariants live in PostgreSQL**, so no API bug, script or race condition can break them. **Workflow and visibility rules live in the API services**, where they need context such as who is asking or what state something is in. Every rule is also covered by a test in `test/rules.test.ts`.
+**Invariants live in PostgreSQL**, so no API bug, script or race can break them. **Workflow and visibility rules live in the API services**, where they need to know who is asking. Every rule has a test (`test/rules.test.ts`, plus the e2e suite).
 
 | Rule | Enforced by |
 |---|---|
-| No duplicate enrollment | Partial unique index `(class_id, student_id) WHERE status <> 'cancelled'` |
-| Never exceed capacity | `SELECT … FOR UPDATE` on the class row inside the enrollment transaction (tested with two concurrent enrollments) |
-| End after start; tutor lessons can't overlap | `CHECK (ends_at > starts_at)`; `EXCLUDE USING gist (tutor_id WITH =, tstzrange(...) WITH &&)` on scheduled lessons |
-| One logbook per class per month | `UNIQUE (class_id, month)` |
-| One entry per lesson that has ended | `UNIQUE (lesson_id)` plus a trigger checking the lesson has ended, isn't cancelled, and is in the same class and month |
-| Approved logbook is read-only | Triggers block updates and deletes on an approved logbook and its entries |
-| Earnings once per lesson; re-approval adds nothing | `UNIQUE (lesson_id)` on `tutor_earnings` plus `ON CONFLICT DO NOTHING`; an approve call on an approved logbook is a no-op |
-| Only admins approve; tutors see only their classes; students only paid classes | Router-level `requireRole`, plus every query scoped by `req.user` (another user's data returns 404) |
-| Logbooks hidden from students until approved | Student queries filter `status = 'approved'` in SQL, so the API can't return unapproved logbooks |
-| Tutors never see student rates | Per-role SQL projections: tutor queries never select rates or amounts (tested on the raw JSON) |
-| One unpaid package per enrollment; paid/void fields consistent | Partial unique index plus `CHECK` constraints on `invoices` |
-
-Times are stored as UTC `timestamptz`. The API only accepts ISO timestamps with an explicit offset; the UI always sends WIB (`+07:00`) and displays in `Asia/Jakarta`. Logbook months are computed in WIB (`wib_month()`).
-
-## API contract
-
-`openapi.yaml` (OpenAPI 3.1) documents all 42 endpoints and is served at `/docs`. The frontends generate their TypeScript types from it with `openapi-typescript`, and call the API through `openapi-fetch`, so a renamed field breaks their typecheck. A contract test fails if a route is undocumented or a response drifts from the spec. All JSON is camelCase; SQL rows are converted once at the response boundary.
+| No duplicate enrollment · one unpaid package per enrollment | Partial unique indexes |
+| Never exceed capacity | Row lock on the class (`SELECT … FOR UPDATE`) in the enrollment transaction; tested with concurrent enrollments |
+| End after start · a tutor's lessons can't overlap | `CHECK`; `EXCLUDE USING gist (tutor_id WITH =, tstzrange(…) WITH &&)` |
+| One logbook per class per month · one entry per ended lesson | `UNIQUE` constraints plus a trigger (lesson ended, not cancelled, same class and month) |
+| Approved logbook is read-only | Triggers block changes to an approved logbook and its entries |
+| Earnings once per lesson; re-approval adds nothing | `UNIQUE (lesson_id)` on `tutor_earnings` + `ON CONFLICT DO NOTHING`; approving twice is a no-op |
+| Roles and ownership (only admins approve, tutors see their classes, students their paid classes) | `requireRole` on routers; every query scoped to `req.user` (others' data → 404) |
+| Logbooks hidden from students until approved · tutors never see student rates | Enforced in the student/tutor SQL itself, so the API can't leak them; tested on raw responses |
 
 ## Design system
 
-The tokens from the brief are defined once, as CSS variables in `src/app/globals.css` of each frontend:
-- navy `#2F3F5F`, gold `#F1C019`, surface `#FAFDFF`, cloud `#E0E2E7` / `#6E7585`, status `#0AB848` / `#FF2819`
-- DM Sans
-- 6px card radius, as a `--radius-card` token
+The brief's tokens are CSS variables in each frontend's `src/app/globals.css`: navy `#2F3F5F`, gold `#F1C019`, surface `#FAFDFF`, cloud `#E0E2E7`/`#6E7585`, status `#0AB848`/`#FF2819`, DM Sans, and a 6px card radius (`--radius-card`). They're mapped onto shadcn/ui's semantic variables, so every Radix-based component in `components/ui/` is on-brand without per-component styling.
 
-**Accessibility exception.** As *text* on the light surface, the brief's status colours fail WCAG AA: `#0AB848` is 2.6:1 and `#FF2819` is 3.7:1, against a required 4.5:1. The same goes for the muted grey on grey backgrounds. So the text tokens use the nearest shades that pass 4.5:1:
-- success `#05732F`
-- destructive `#C8170A`
-- warning `#8A6400`
-- muted `#646B7B`
-
-The exact brand hexes stay defined as `--sg-*` tokens. An automated axe scan of every screen checks this (see the e2e suite).
-
-They're mapped onto shadcn/ui's semantic variables (`--primary`, `--accent`, `--destructive`, plus custom `--success`/`--warning`), so every component (Radix-based, in `components/ui/`) picks up the brand without per-component styling.
-
-On top of that sit three layers:
-- `components/ui-kit.tsx`: `StatusBadge` (one status → colour/label map for invoices, logbooks, lessons and balance flags), `StatCard`, `HoursMeter`, and loading/empty/error states
-- `lib/format.ts`: IDR, durations, and WIB dates
-- per-app shells: a sidebar for the back office, and a bottom nav with safe-area insets for the PWA
-
-Because the repos are separate, `ui-kit.tsx`, `format.ts` and `components/ui` are copied between the two frontends. A shared package is the next step (see DECISIONS.md).
-
-**PWA:**
-- `app/manifest.ts`, with icons generated by `ImageResponse`
-- a small service worker (`public/sw.js`): cache-first for hashed assets, network-first for pages, an offline fallback, and **never caches `/api`**, so hours and invoices are always live and personal data doesn't linger after logout
+- **Accessibility:** as text on the light surface, `#0AB848` (2.6:1) and `#FF2819` (3.7:1) fail WCAG AA, so text uses the nearest passing shades (`#05732F`, `#C8170A`, `#8A6400` for gold, `#646B7B` muted). The exact brand values stay as `--sg-*` tokens; an axe scan of every screen guards this.
+- **Shared pieces:** `components/ui-kit.tsx` (status badges, stat cards, hours meter, empty/error states) and `lib/format.ts` (IDR, durations, WIB dates). They're copied between the two frontends because the repos are separate; a shared package is a next step.
+- **Shells:** a sidebar for the back office; the PWA has a floating bottom nav and bottom-sheet dialogs. Its service worker caches the app shell but **never `/api`**, so balances are always live.
