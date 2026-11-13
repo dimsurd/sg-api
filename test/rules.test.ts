@@ -35,7 +35,7 @@ describe('enrollment & capacity', () => {
     const s2 = await loginAs('student2');
     const res = await s2.post('/student/enrollments', { classId: IDS.class, hours: 10 });
     expect(res.status).toBe(201);
-    expect(res.body.invoice).toMatchObject({ hours: 10, rate_per_hour: 150000, amount: 1_500_000, status: 'unpaid' });
+    expect(res.body.invoice).toMatchObject({ hours: 10, ratePerHour: 150000, amount: 1_500_000, status: 'unpaid' });
 
     const admin = await loginAs('admin');
     await admin.patch(`/admin/classes/${IDS.class}`, { studentRatePerHour: 200000 });
@@ -121,8 +121,8 @@ describe('lessons', () => {
     const before = (await s1.get('/student/classes')).body.classes[0];
     await tutor.post(`/tutor/lessons/${IDS.upcomingLesson}/cancel`, { reason: 'Tutor is sick' });
     const after = (await s1.get('/student/classes')).body.classes[0];
-    expect(after.reserved_minutes).toBe(before.reserved_minutes - 90);
-    expect(after.available_minutes).toBe(before.available_minutes + 90);
+    expect(after.reservedMinutes).toBe(before.reservedMinutes - 90);
+    expect(after.availableMinutes).toBe(before.availableMinutes + 90);
   });
 
   it('skips a student whose balance cannot cover the lesson', async () => {
@@ -218,7 +218,7 @@ describe('visibility of money', () => {
     const list = await tutor.get('/tutor/classes');
     const detail = await tutor.get(`/tutor/classes/${IDS.class}`);
     for (const body of [list.body, detail.body]) {
-      expect(JSON.stringify(body)).not.toMatch(/student_rate|rate_per_hour":150000|amount/);
+      expect(JSON.stringify(body)).not.toMatch(/studentRate|ratePerHour":150000|amount/);
     }
   });
 
@@ -241,13 +241,13 @@ describe('money dashboard', () => {
     const admin = await loginAs('admin');
     const res = await admin.get('/admin/reports/overview');
     expect(res.status).toBe(200);
-    const s1 = res.body.balances.find((b: { student_id: string }) => b.student_id === IDS.student1);
+    const s1 = res.body.balances.find((b: { studentId: string }) => b.studentId === IDS.student1);
     // 12h paid, 4 x 90min ended = 6h used, 2 x 90min upcoming = 3h reserved
-    expect(s1).toMatchObject({ paid_minutes: 720, used_minutes: 360, reserved_minutes: 180, remaining_minutes: 360 });
+    expect(s1).toMatchObject({ paidMinutes: 720, usedMinutes: 360, reservedMinutes: 180, remainingMinutes: 360 });
 
     // Approved month: delivered 3h x 150k = 450k, tutor cost 300k -> margin 150k.
-    const approvedMonth = res.body.classFinancials.find((f: { tutor_cost_approved: number }) => f.tutor_cost_approved > 0);
-    expect(approvedMonth).toMatchObject({ delivered_revenue: 450000, tutor_cost_approved: 300000, margin: 150000 });
+    const approvedMonth = res.body.classFinancials.find((f: { tutorCostApproved: number }) => f.tutorCostApproved > 0);
+    expect(approvedMonth).toMatchObject({ deliveredRevenue: 450000, tutorCostApproved: 300000, margin: 150000 });
   });
 
   it('flags unpaid invoices and lets the admin issue a new package', async () => {
@@ -257,7 +257,7 @@ describe('money dashboard', () => {
     expect(overview.kpis.unpaidCount).toBe(1);
     expect(overview.kpis.outstandingAmount).toBe(1_800_000);
 
-    const s1Enrollment = overview.balances.find((b: { student_id: string }) => b.student_id === IDS.student1).enrollment_id;
+    const s1Enrollment = overview.balances.find((b: { studentId: string }) => b.studentId === IDS.student1).enrollmentId;
     const pkg = await admin.post(`/admin/enrollments/${s1Enrollment}/packages`, {});
     expect(pkg.status).toBe(201);
     // A second unpaid package on the same enrollment is refused.
