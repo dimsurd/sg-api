@@ -155,6 +155,9 @@ CREATE TABLE invoices (
   CONSTRAINT invoices_void_fields CHECK ((status = 'void') = (voided_at IS NOT NULL))
 );
 CREATE INDEX invoices_enrollment_idx ON invoices (enrollment_id);
+-- Rule: at most one unpaid package per enrollment (no stacking unpaid invoices).
+CREATE UNIQUE INDEX invoices_one_unpaid_per_enrollment
+  ON invoices (enrollment_id) WHERE status = 'unpaid';
 CREATE INDEX invoices_unpaid_idx ON invoices (due_at) WHERE status = 'unpaid';
 
 -- ---------------------------------------------------------------------
