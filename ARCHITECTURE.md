@@ -71,6 +71,14 @@ The tokens from the brief are defined once, as CSS variables in `src/app/globals
 - DM Sans
 - 6px card radius, as a `--radius-card` token
 
+**Accessibility exception.** As *text* on the light surface, the brief's status colours fail WCAG AA: `#0AB848` is 2.6:1 and `#FF2819` is 3.7:1, against a required 4.5:1. The same goes for the muted grey on grey backgrounds. So the text tokens use the nearest shades that pass 4.5:1:
+- success `#05732F`
+- destructive `#C8170A`
+- warning `#8A6400`
+- muted `#646B7B`
+
+The exact brand hexes stay defined as `--sg-*` tokens. An automated axe scan of every screen checks this (see the e2e suite).
+
 They're mapped onto shadcn/ui's semantic variables (`--primary`, `--accent`, `--destructive`, plus custom `--success`/`--warning`), so every component (Radix-based, in `components/ui/`) picks up the brand without per-component styling.
 
 On top of that sit three layers:
