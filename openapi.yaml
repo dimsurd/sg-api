@@ -739,9 +739,9 @@ components:
     Client:
       name: X-SG-Client
       in: header
-      required: true
-      description: Which frontend is calling; selects the session cookie and which roles may log in.
-      schema: { type: string, enum: [app, backoffice] }
+      required: false
+      description: Which frontend is calling; selects the session cookie and which roles may log in. Defaults to `app`.
+      schema: { type: string, enum: [app, backoffice], default: app }
     Id: { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Id' } }
     ClassId: { name: classId, in: path, required: true, schema: { $ref: '#/components/schemas/Id' } }
     MonthPath: { name: month, in: path, required: true, schema: { $ref: '#/components/schemas/Month' } }
